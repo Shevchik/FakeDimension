@@ -15,8 +15,8 @@ public class FakeDimension extends JavaPlugin {
 
 	@Override
 	public void onEnable() {
-		if (!ProtocolLibrary.getProtocolManager().getMinecraftVersion().isAtLeast(MinecraftVersion.COMBAT_UPDATE)) {
-			System.err.println("Your servers needs to be 1.9+");
+		if (!ProtocolLibrary.getProtocolManager().getMinecraftVersion().isAtLeast(MinecraftVersion.VILLAGE_UPDATE)) {
+			System.err.println("Your server needs to be 1.14+");
 			setEnabled(false);
 			return;
 		}

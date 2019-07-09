@@ -25,6 +25,7 @@ public class Config {
 	public void load(FakeDimension plugin) {
 		File file = new File(plugin.getDataFolder(), config);
 		YamlConfiguration configYml = YamlConfiguration.loadConfiguration(file);
+		fakeDimensions.clear();
 		configYml.getStringList(fakeNormalDimensionKey).stream()
 		.forEach(world -> fakeDimensions.put(world, Dimension.NORMAL));
 		configYml.getStringList(fakeNetherDimensionKey).stream()

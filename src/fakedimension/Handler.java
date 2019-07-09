@@ -1,15 +1,14 @@
 package fakedimension;
 
-import java.util.Arrays;
+import java.lang.reflect.InvocationTargetException;
 import java.util.Collections;
-import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.bukkit.Bukkit;
 import org.bukkit.World;
-import org.bukkit.World.Environment;
 import org.bukkit.WorldType;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -22,81 +21,63 @@ import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.events.PacketAdapter;
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.events.PacketEvent;
-import com.comphenix.protocol.wrappers.EnumWrappers.Difficulty;
 import com.comphenix.protocol.wrappers.EnumWrappers.NativeGameMode;
-
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 
 public class Handler implements Listener {
 
 	private final Config config;
+
 	public Handler(Config config) {
 		this.config = config;
 	}
 
-	protected final Map<UUID, FakeDimensionEntry> fakeDimensions = new ConcurrentHashMap<>();
-	protected final Set<UUID> dimensionSwitched = Collections.newSetFromMap(new ConcurrentHashMap<>());
+	protected final Set<UUID> switchedDimension = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
 	public void start(FakeDimension plugin) {
 		Bukkit.getPluginManager().registerEvents(this, plugin);
 
-		//fake dimension on login
+		// fake dimension on login
 		ProtocolLibrary.getProtocolManager().addPacketListener(new PacketAdapter(PacketAdapter.params(plugin, PacketType.Play.Server.LOGIN)) {
 
 			@Override
 			public void onPacketSending(PacketEvent event) {
-				Player player = event.getPlayer();
-				World world = player.getWorld();
-
-				config.getDimension(world.getName())
-				.ifPresent(fakeDim -> {
-					fakeDimensions.put(player.getUniqueId(), new FakeDimensionEntry(world.getEnvironment(), fakeDim));
-					event.getPacket().getIntegers().write(1, fakeDim.getId());
-				});
+				config.getDimension(event.getPlayer().getWorld().getName())
+				.ifPresent(dimension -> event.getPacket().getDimensions().write(0, dimension.getId()));
 			}
 
 		});
 
-		//track player dimension switch, because we can't get player world at that time
+		// track dimension on dimension switch (we have to do this because dimension switch is sent before player actually enters world)
 		ProtocolLibrary.getProtocolManager().addPacketListener(new PacketAdapter(PacketAdapter.params(plugin, PacketType.Play.Server.RESPAWN)) {
 			@Override
 			public void onPacketSending(PacketEvent event) {
-				Player player = event.getPlayer();
-				removePlayer(player);
-				dimensionSwitched.add(player.getUniqueId());
+				switchedDimension.add(event.getPlayer().getUniqueId());
 			}
 		});
 
-		//fake dimension on first position packet after dimension switch
+		/* actually fake dimension on first position packet <br>
+		/* we switch dimensions using middle dimension twice even we don't have fake dimension in new world
+		/* because player might have respawned in the same dimension after switch from faked to non faked dimension*/
 		ProtocolLibrary.getProtocolManager().addPacketListener(new PacketAdapter(PacketAdapter.params(plugin, PacketType.Play.Server.POSITION)) {
 
-			PacketContainer createDimensionSwitch(Player player, Difficulty difficulty, WorldType wtype, Dimension targetDimension) {
+			PacketContainer createDimensionSwitch(Player player, WorldType wtype, Dimension targetDimension) {
 				PacketContainer packet = ProtocolLibrary.getProtocolManager().createPacket(PacketType.Play.Server.RESPAWN);
-				packet.getIntegers().write(0, targetDimension.getId());
-				packet.getDifficulties().write(0, difficulty);
+				packet.getDimensions().write(0, targetDimension.getId());
 				packet.getGameModes().write(0, NativeGameMode.fromBukkit(player.getGameMode()));
 				packet.getWorldTypeModifier().write(0, wtype);
 				return packet;
 			}
 
-			Difficulty fromBukkit(org.bukkit.Difficulty difficulty) {
-				switch (difficulty) {
-					case PEACEFUL: {
-						return Difficulty.PEACEFUL;
-					}
-					case EASY: {
-						return Difficulty.EASY;
-					}
-					case NORMAL: {
-						return Difficulty.NORMAL;
-					}
-					case HARD: {
-						return Difficulty.HARD;
-					}
-					default: {
-						return Difficulty.PEACEFUL;
-					}
+			Dimension getMiddleDimension(Dimension dimension) {
+				return dimension == Dimension.NORMAL ? Dimension.NETHER : Dimension.NORMAL;
+			}
+
+			void sendPacketNow(Player player, PacketContainer packet) {
+				try {
+					ProtocolLibrary.getProtocolManager().sendServerPacket(player, packet, false);
+				} catch (InvocationTargetException e) {
+					player.kickPlayer("Fake dimension failure");
+					e.printStackTrace();
 				}
 			}
 
@@ -104,131 +85,25 @@ public class Handler implements Listener {
 			public void onPacketSending(PacketEvent event) {
 				Player player = event.getPlayer();
 
-				if (!dimensionSwitched.remove(player.getUniqueId())) {
+				if (!switchedDimension.remove(player.getUniqueId())) {
 					return;
 				}
 
 				World world = player.getWorld();
-				config.getDimension(world.getName())
-				.ifPresent(fakeDim -> {
-					fakeDimensions.put(player.getUniqueId(), new FakeDimensionEntry(world.getEnvironment(), fakeDim));
-					Dimension middleDim = fakeDim == Dimension.NORMAL ? Dimension.NETHER : Dimension.NORMAL;
-					try {
-						Difficulty difficulty = fromBukkit(world.getDifficulty());
-						WorldType wtype = world.getWorldType();
-						ProtocolLibrary.getProtocolManager().sendServerPacket(player, createDimensionSwitch(player, difficulty, wtype, middleDim), false);
-						ProtocolLibrary.getProtocolManager().sendServerPacket(player, createDimensionSwitch(player, difficulty, wtype, fakeDim), false);
-					} catch (Exception e) {
-						System.err.println("Unable to send dimension switch packets");
-						e.printStackTrace();
-					}
-				});
-			}
+				Optional<Dimension> optDimension = config.getDimension(world.getName());
 
-		});
+				Dimension targetDimension = optDimension.orElseGet(() -> Dimension.getByBukkit(world.getEnvironment()));
 
-		//rewrite chunks, because skylight is not sent for worlds that doesn't have skylight
-		ProtocolLibrary.getProtocolManager().addPacketListener(new PacketAdapter(PacketAdapter.params(plugin, PacketType.Play.Server.MAP_CHUNK)) {
-
-			boolean hasBiomeData;
-			final ChunkSection[] sections = new ChunkSection[16];
-			final byte[] biomeData = new byte[256];
-
-			class ChunkSection {
-
-				final byte bitsPerBlock;
-				final int[] palette;
-				final byte[] blockdata;
-				final byte[] blocklight = new byte[2048];
-				final byte[] skylight = new byte[2048];
-
-				public ChunkSection(ByteBuf datastream, boolean hasSkyLight) {
-					bitsPerBlock = datastream.readByte();
-					palette = new int[VarNumberSerializer.readVarInt(datastream)];
-					for (int i = 0; i < palette.length; i++) {
-						palette[i] = VarNumberSerializer.readVarInt(datastream);
-					}
-					blockdata = new byte[VarNumberSerializer.readVarInt(datastream) * Long.BYTES];
-					datastream.readBytes(blockdata);
-					datastream.readBytes(blocklight);
-					if (hasSkyLight) {
-						datastream.readBytes(skylight);
-					}
-				}
-
-				protected void writeTo(ByteBuf datastream, boolean hasSkyLight) {
-					datastream.writeByte(bitsPerBlock);
-					VarNumberSerializer.writeVarInt(datastream, palette.length);
-					for (int palettei : palette) {
-						VarNumberSerializer.writeVarInt(datastream, palettei);
-					}
-					VarNumberSerializer.writeVarInt(datastream, blockdata.length / Long.BYTES);
-					datastream.writeBytes(blockdata);
-					datastream.writeBytes(blocklight);
-					if (hasSkyLight) {
-						Arrays.fill(skylight, (byte) 255);
-						datastream.writeBytes(skylight);
-					}
-				}
-
-			}
-
-			@Override
-			public void onPacketSending(PacketEvent event) {
-				FakeDimensionEntry entry = fakeDimensions.get(event.getPlayer().getUniqueId());
-				if (entry == null) {
-					return;
-				}
-
-				PacketContainer packet = event.getPacket();
-				hasBiomeData = packet.getBooleans().read(0);
-				int columnsCount = Integer.bitCount(packet.getIntegers().read(2));
-
-				//decode chunk data
-				ByteBuf chunkdata = Unpooled.wrappedBuffer(packet.getByteArrays().read(0));
-				for (int i = 0; i < columnsCount; i++) {
-					sections[i] = new ChunkSection(chunkdata, entry.realDimensionSkyLight);
-				}
-				if (hasBiomeData) {
-					chunkdata.readBytes(biomeData);
-				}
-
-				//encode chunk data
-				chunkdata = Unpooled.buffer(40000);
-				for (int i = 0; i < columnsCount; i++) {
-					sections[i].writeTo(chunkdata, entry.fakeDimensionSkyLight);
-				}
-				if (hasBiomeData) {
-					chunkdata.writeBytes(biomeData);
-				}
-
-				//write it to packet
-				byte[] chunkdatarr = new byte[chunkdata.readableBytes()];
-				chunkdata.readBytes(chunkdatarr);
-				packet.getByteArrays().write(0, chunkdatarr);
+				sendPacketNow(player, createDimensionSwitch(player, world.getWorldType(), getMiddleDimension(targetDimension)));
+				sendPacketNow(player, createDimensionSwitch(player, world.getWorldType(), targetDimension));
 			}
 
 		});
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR)
-	public void onLeave(PlayerQuitEvent event) {
-		removePlayer(event.getPlayer());
+	public void onQuit(PlayerQuitEvent event) {
+		switchedDimension.remove(event.getPlayer().getUniqueId());
 	}
-
-	private void removePlayer(Player player) {
-		fakeDimensions.remove(player.getUniqueId());
-		dimensionSwitched.remove(player.getUniqueId());
-	}
-
-	private static final class FakeDimensionEntry {
-		private final boolean realDimensionSkyLight;
-		private final boolean fakeDimensionSkyLight;
-		public FakeDimensionEntry(Environment realDimension, Dimension fakeDimension) {
-			this.realDimensionSkyLight = realDimension == Environment.NORMAL;
-			this.fakeDimensionSkyLight = fakeDimension == Dimension.NORMAL;
-		}
-	}
-
 
 }
