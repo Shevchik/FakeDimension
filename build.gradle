@@ -1,0 +1,77 @@
+plugins {
+	id 'java'
+}
+
+
+import java.nio.file.Path
+import java.nio.file.Files
+
+
+defaultTasks 'build'
+
+
+group 'io.github.shevchik'
+version '1.2'
+
+
+Path projectDirectoryPath = projectDir.toPath().toAbsolutePath()
+
+
+sourceCompatibility = JavaVersion.VERSION_1_8
+
+sourceSets {
+	main {
+		java {
+			srcDirs = ['src']
+		}
+		resources {
+			srcDirs = ['resources']
+		}
+	}
+}
+
+repositories {
+	mavenCentral()
+	jcenter()
+	maven {
+		url 'https://oss.sonatype.org/content/repositories/snapshots/'
+	}
+	maven {
+		url 'https://papermc.io/repo/repository/maven-public/'
+	}
+	maven {
+		url 'https://repo.dmulloy2.net/nexus/repository/public/'
+	}
+}
+
+dependencies {
+	compileOnly group: 'com.destroystokyo.paper', name: 'paper-api', version: '1.16.2-R0.1-SNAPSHOT'
+	compileOnly group: 'com.comphenix.protocol', name: 'ProtocolLib', version: '4.6.0-SNAPSHOT'
+}
+
+compileJava {
+	options.encoding = 'UTF-8'
+	options.incremental = false
+}
+
+
+jar {
+	from sourceSets.main.java.srcDirs
+	from 'LICENSE'
+
+	archiveName = jar.archiveName
+}
+
+
+task copyFinalJarToTarget(type: DefaultTask) {doLast{
+	Path targetJarDirectory = projectDirectoryPath.resolve("target")
+	Files.createDirectories(targetJarDirectory)
+	Files.copy(
+		jar.archivePath.toPath().toAbsolutePath(),
+		targetJarDirectory.resolve(jar.baseName + '.jar'),
+		java.nio.file.StandardCopyOption.REPLACE_EXISTING
+	)
+}}
+
+
+jar.finalizedBy(copyFinalJarToTarget)
