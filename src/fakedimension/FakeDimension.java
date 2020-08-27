@@ -1,27 +1,21 @@
 package fakedimension;
 
+import java.io.File;
+
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import com.comphenix.protocol.ProtocolLibrary;
-import com.comphenix.protocol.utility.MinecraftVersion;
-
 public class FakeDimension extends JavaPlugin {
 
-	private final Config config = new Config();
-	private final Handler handler = new Handler(config);
+	private final FakeDimensionConfig config = new FakeDimensionConfig(new File(getDataFolder(), "config.yml"));
+	private final FakeDimensionHandler handler = new FakeDimensionHandler(this, config);
 
 	@Override
 	public void onEnable() {
-		if (!ProtocolLibrary.getProtocolManager().getMinecraftVersion().isAtLeast(MinecraftVersion.VILLAGE_UPDATE)) {
-			System.err.println("Your server needs to be 1.14+");
-			setEnabled(false);
-			return;
-		}
-		config.load(this);
-		handler.start(this);
+		config.load();
+		handler.start();
 	}
 
 	@Override
@@ -31,7 +25,7 @@ public class FakeDimension extends JavaPlugin {
 			return true;
 		}
 		if ((args.length == 1) && args[0].equalsIgnoreCase("reload")) {
-			config.load(this);
+			config.load();
 			sender.sendMessage(ChatColor.YELLOW + "Configuration reloaded");
 			return true;
 		}

@@ -1,10 +1,10 @@
 name: FakeDimension
 main: fakedimension.FakeDimension
-api-version: 1.14
+api-version: 1.16
 depend: [ProtocolLib]
-version: 1.1
+version: 1.2
 author: _Shevchik_
 commands:
     fakedimension:
         description: Reload command for FakeDimension
-        usage: /fakedimension reload - reload configuration
+        usage: /<command> reload - reload configuration
