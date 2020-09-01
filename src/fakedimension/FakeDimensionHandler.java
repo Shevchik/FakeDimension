@@ -68,7 +68,7 @@ public class FakeDimensionHandler implements Listener {
 			new PacketAdapter(PacketAdapter.params(plugin, PacketType.Play.Server.LOGIN, PacketType.Play.Server.RESPAWN)) {
 				@Override
 				public void onPacketSending(PacketEvent event) {
-					config.getDimension(event.getPlayer().getWorld().getName())
+					config.getDimension(playerWorld.get(event.getPlayer().getUniqueId()))
 					.ifPresent(dimension ->
 						dimensionManagerStructureModifier
 						.withTarget(event.getPacket().getSpecificModifier(dimensionManagerClass).read(0))
